@@ -5,6 +5,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+import autostart
 import popup as messagebox  # 音なし・ウィンドウ中央のポップアップ
 
 import pystray
@@ -218,6 +219,9 @@ class App(tk.Tk):
         ttk.Button(top, text="保存して反映", command=self.save).pack(side="left", padx=6)
         self.status = ttk.Label(top, text="停止中", foreground="gray")
         self.status.pack(side="left", padx=10)
+        self.autostart_var = tk.BooleanVar(value=autostart.is_enabled())
+        ttk.Checkbutton(top, text="PC起動時に自動起動", variable=self.autostart_var,
+                        command=self.toggle_autostart).pack(side="right")
 
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8)
@@ -433,6 +437,15 @@ class App(tk.Tk):
         CONFIG_PATH.write_text(json.dumps(self.config_data, ensure_ascii=False, indent=2), encoding="utf-8")
         self.engine.load(self.config_data)
         self.log("保存・反映しました")
+
+    def toggle_autostart(self):
+        on = self.autostart_var.get()
+        try:
+            autostart.set_enabled(on)
+            self.log("PC起動時の自動起動: " + ("ON" if on else "OFF"))
+        except OSError as e:
+            self.autostart_var.set(autostart.is_enabled())
+            messagebox.showerror("エラー", f"自動起動の設定に失敗しました: {e}")
 
     def _show_switch(self, on):
         color = "#2e9e4f" if on else "#9a9a9a"
