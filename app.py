@@ -3,7 +3,9 @@ import json
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
+
+import popup as messagebox  # 音なし・ウィンドウ中央のポップアップ
 
 import pystray
 from PIL import Image, ImageTk
