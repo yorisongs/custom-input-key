@@ -131,6 +131,14 @@ class Table(ttk.Frame):
                      ).grid(row=0, column=c, sticky="nsew", padx=(1, 1), pady=(1, 1))
         self.rows, self.selected = [], None
         self.on_select = None
+        self.on_add = None
+        self.ncols = len(headings)
+        self.plus = tk.Label(self.inner, text="＋", bg="white", fg="#2e7dd7",
+                             font=("", 12, "bold"), cursor="hand2", pady=1)
+        self.plus.bind("<Button-1>", lambda e: self.on_add and self.on_add())
+        self.plus.bind("<Enter>", lambda e: self.plus.config(bg="#eef5ff"))
+        self.plus.bind("<Leave>", lambda e: self.plus.config(bg="white"))
+        self.plus.bind("<MouseWheel>", self._wheel)
 
     def insert(self, values):
         cells = []
@@ -158,6 +166,8 @@ class Table(ttk.Frame):
                 lb.bind("<Button-1>", lambda e, i=r - 1: self.select(i))
                 lb.bind("<MouseWheel>", self._wheel)
                 lb.config(bg=self.SEL if r - 1 == self.selected else "white")
+        self.plus.grid(row=len(self.rows) + 1, column=0, columnspan=self.ncols,
+                       sticky="nsew", padx=(1, 1), pady=(0, 1))
 
     def select(self, i):
         self.selected = i
@@ -225,61 +235,41 @@ class App(tk.Tk):
             self.remap_tree.insert((s, CHOICE_OF.get(d, d)))
         row = ttk.Frame(f)
         row.pack(fill="x", pady=6)
-        self.src_cb = ttk.Combobox(row, values=ALL_KEYS, width=14)
-        self.dst_cb = ttk.Combobox(row, values=list(CHOICES) + ALL_KEYS, width=24)
+        self.src_var, self.dst_var = tk.StringVar(), tk.StringVar()
+        self.src_cb = ttk.Combobox(row, values=ALL_KEYS, width=14, textvariable=self.src_var)
+        self.dst_cb = ttk.Combobox(row, values=list(CHOICES) + ALL_KEYS, width=24, textvariable=self.dst_var)
+        self._loading = False
+        for v in (self.src_var, self.dst_var):
+            v.trace_add("write", lambda *_: self._edit_selected())
         self.src_cb.pack(side="left")
         ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_combo(self.src_cb.set)).pack(side="left")
         ttk.Label(row, text="→").pack(side="left", padx=4)
         self.dst_cb.pack(side="left")
         ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_combo(self.dst_cb.set)).pack(side="left")
-        ttk.Button(row, text="追加", command=self.add_remap).pack(side="left", padx=(6, 0))
-        ttk.Button(row, text="選択を更新", command=self.update_remap).pack(side="left", padx=4)
         ttk.Button(row, text="選択を削除",
                    command=self.remap_tree.delete_selected
                    ).pack(side="left")
         self.remap_tree.on_select = self._load_remap  # 行クリックで入力欄に読み込み
+        self.remap_tree.on_add = self._add_empty_row
+        ttk.Label(f, text="＋で行を追加 → 行を選んで下の欄で編集 (そのまま行に反映) → 保存して反映",
+                  foreground="gray").pack(anchor="w")
         return f
 
     def _load_remap(self, i, values):
-        self.src_cb.set(values[0])
-        self.dst_cb.set(values[1])
+        self._loading = True
+        self.src_var.set(values[0])
+        self.dst_var.set(values[1])
+        self._loading = False
 
-    def _read_remap_inputs(self):
-        s, d = self.src_cb.get().strip(), self.dst_cb.get().strip()
-        try:
-            parse_combo(s)
-            if d not in CHOICES:
-                parse_combo(d)
-        except ValueError as e:
-            messagebox.showerror("エラー", f"キー指定が不正です: {e}")
-            return None
-        return s, d
-
-    def update_remap(self):
+    def _edit_selected(self):
         i = self.remap_tree.selected
-        if i is None:
-            messagebox.showinfo("編集", "表から編集する行をクリックしてください")
-            return
-        vals = self._read_remap_inputs()
-        if not vals:
-            return
-        for j, v in enumerate(self.remap_tree.values()):
-            if j != i and v[0] == vals[0]:
-                messagebox.showerror("エラー", f"{vals[0]} は既に登録されています")
-                return
-        self.remap_tree.update_row(i, vals)
-        self.log(f"更新: {vals[0]} → {vals[1]} (保存で反映)")
+        if not self._loading and i is not None:
+            self.remap_tree.update_row(i, (self.src_var.get().strip(), self.dst_var.get().strip()))
 
-    def add_remap(self):
-        vals = self._read_remap_inputs()
-        if not vals:
-            return
-        s, d = vals
-        for i, v in enumerate(self.remap_tree.values()):
-            if v[0] == s:
-                self.remap_tree.delete(i)
-                break
-        self.remap_tree.insert((s, d))
+    def _add_empty_row(self):
+        self.remap_tree.insert(("", ""))
+        self.remap_tree.select(len(self.remap_tree.rows) - 1)
+        self.src_cb.focus_set()
 
     # ---------- マクロタブ ----------
     def _macro_tab(self, parent):
@@ -401,11 +391,23 @@ class App(tk.Tk):
 
     # ---------- 共通 ----------
     def save(self):
-        self.config_data = {
-            "remaps": {str(v[0]): CHOICES.get(str(v[1]), str(v[1])) for v in
-                       self.remap_tree.values()},
-            "macros": self.macros,
-        }
+        remaps = {}
+        for n, (src, dst) in enumerate(self.remap_tree.values(), 1):
+            src, dst = str(src).strip(), CHOICES.get(str(dst), str(dst).strip())
+            if not src and not dst:
+                continue  # 空行は無視
+            try:
+                parse_combo(src)
+                if not dst.startswith("func:"):
+                    parse_combo(dst)
+            except ValueError as e:
+                messagebox.showerror("エラー", f"キー変更 {n}行目: {e}")
+                return
+            if src in remaps:
+                messagebox.showerror("エラー", f"キー変更 {n}行目: {src} が重複しています")
+                return
+            remaps[src] = dst
+        self.config_data = {"remaps": remaps, "macros": self.macros}
         CONFIG_PATH.write_text(json.dumps(self.config_data, ensure_ascii=False, indent=2), encoding="utf-8")
         self.engine.load(self.config_data)
         self.log("保存・反映しました")
