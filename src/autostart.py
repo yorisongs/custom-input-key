@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 NAME = "CustomInputKey"
-LAUNCHER = Path(__file__).with_name("CustomInputKey.pyw").resolve()
+LAUNCHER = Path(__file__).resolve().parent.parent / "CustomInputKey.pyw"
 
 
 def _command():

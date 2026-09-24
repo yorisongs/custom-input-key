@@ -7,7 +7,7 @@ foreach ($target in @($dir, [Environment]::GetFolderPath("Desktop"))) {
     $lnk.TargetPath = $pythonw
     $lnk.Arguments = "`"$dir\CustomInputKey.pyw`""
     $lnk.WorkingDirectory = $dir
-    $lnk.IconLocation = "$dir\app_icon.ico,0"
+    $lnk.IconLocation = "$dir\src\app_icon.ico,0"
     $lnk.Save()
 }
 Write-Output "作成しました"
