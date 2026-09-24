@@ -130,6 +130,7 @@ class Table(ttk.Frame):
             tk.Label(self.inner, text=h, bg="#e8e8e8", anchor="center", pady=3
                      ).grid(row=0, column=c, sticky="nsew", padx=(1, 1), pady=(1, 1))
         self.rows, self.selected = [], None
+        self.on_select = None
 
     def insert(self, values):
         cells = []
@@ -161,6 +162,13 @@ class Table(ttk.Frame):
     def select(self, i):
         self.selected = i
         self._layout()
+        if self.on_select:
+            self.on_select(i, self.rows[i][0])
+
+    def update_row(self, i, values):
+        self.rows[i][0] = list(values)
+        for lb, v in zip(self.rows[i][1], values):
+            lb.config(text=v)
 
     def values(self):
         return [v for v, _ in self.rows]
@@ -224,13 +232,19 @@ class App(tk.Tk):
         ttk.Label(row, text="→").pack(side="left", padx=4)
         self.dst_cb.pack(side="left")
         ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_combo(self.dst_cb.set)).pack(side="left")
-        ttk.Button(row, text="追加", command=self.add_remap).pack(side="left", padx=6)
+        ttk.Button(row, text="追加", command=self.add_remap).pack(side="left", padx=(6, 0))
+        ttk.Button(row, text="選択を更新", command=self.update_remap).pack(side="left", padx=4)
         ttk.Button(row, text="選択を削除",
                    command=self.remap_tree.delete_selected
                    ).pack(side="left")
+        self.remap_tree.on_select = self._load_remap  # 行クリックで入力欄に読み込み
         return f
 
-    def add_remap(self):
+    def _load_remap(self, i, values):
+        self.src_cb.set(values[0])
+        self.dst_cb.set(values[1])
+
+    def _read_remap_inputs(self):
         s, d = self.src_cb.get().strip(), self.dst_cb.get().strip()
         try:
             parse_combo(s)
@@ -238,7 +252,29 @@ class App(tk.Tk):
                 parse_combo(d)
         except ValueError as e:
             messagebox.showerror("エラー", f"キー指定が不正です: {e}")
+            return None
+        return s, d
+
+    def update_remap(self):
+        i = self.remap_tree.selected
+        if i is None:
+            messagebox.showinfo("編集", "表から編集する行をクリックしてください")
             return
+        vals = self._read_remap_inputs()
+        if not vals:
+            return
+        for j, v in enumerate(self.remap_tree.values()):
+            if j != i and v[0] == vals[0]:
+                messagebox.showerror("エラー", f"{vals[0]} は既に登録されています")
+                return
+        self.remap_tree.update_row(i, vals)
+        self.log(f"更新: {vals[0]} → {vals[1]} (保存で反映)")
+
+    def add_remap(self):
+        vals = self._read_remap_inputs()
+        if not vals:
+            return
+        s, d = vals
         for i, v in enumerate(self.remap_tree.values()):
             if v[0] == s:
                 self.remap_tree.delete(i)
