@@ -1,0 +1,22 @@
+# Custom Input Key
+
+Windows / macOS 両対応のキーボード拡張アプリ（キー変更・マクロ）。
+
+## セットアップ
+```
+pip install -r requirements.txt
+python app.py
+```
+「▶ 開始」でフックが有効になります。設定は `config.json` に保存されます。
+
+## 機能
+- **キー変更**: 例 `caps_lock → ctrl_l`, `muhenkan → esc`
+- **マクロ**: ホットキー（例 `ctrl+alt+m`）で以下を順番に実行
+  - `text: 文字列` 文字を入力
+  - `key: enter` キーを1回押す
+  - `combo: ctrl+c` 同時押し
+  - `wait: 0.5` 待機（秒）
+
+## 注意
+- **macOS**: 「システム設定 > プライバシーとセキュリティ」の「アクセシビリティ」「入力監視」で実行元（ターミナル等）を許可してください。修飾キー(ctrl/cmd等)自体の入れ替えは macOS 標準の「修飾キー」設定を使ってください。
+- **Windows**: 管理者権限で動くアプリ上では、本アプリも管理者で起動しないと効きません。
