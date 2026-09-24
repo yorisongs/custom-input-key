@@ -247,7 +247,7 @@ class App(tk.Tk):
         self.dst_cb.pack(side="left")
         ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_combo(self.dst_cb.set)).pack(side="left")
         ttk.Button(row, text="選択を削除",
-                   command=self.remap_tree.delete_selected
+                   command=self.del_remap
                    ).pack(side="left")
         self.remap_tree.on_select = self._load_remap  # 行クリックで入力欄に読み込み
         self.remap_tree.on_add = self._add_empty_row
@@ -265,6 +265,20 @@ class App(tk.Tk):
         i = self.remap_tree.selected
         if not self._loading and i is not None:
             self.remap_tree.update_row(i, (self.src_var.get().strip(), self.dst_var.get().strip()))
+
+    def del_remap(self):
+        i = self.remap_tree.selected
+        if i is None:
+            messagebox.showinfo("削除", "削除する行をクリックして選んでください")
+            return
+        src, dst = self.remap_tree.values()[i]
+        if messagebox.askyesno("削除の確認", f"この行を削除しますか？\n\n{src or '(空)'} → {dst or '(空)'}",
+                               icon="warning"):
+            self.remap_tree.delete(i)
+            self._loading = True
+            self.src_var.set("")
+            self.dst_var.set("")
+            self._loading = False
 
     def _add_empty_row(self):
         self.remap_tree.insert(("", ""))
@@ -328,7 +342,11 @@ class App(tk.Tk):
 
     def del_macro(self):
         sel = self.macro_list.curselection()
-        if sel:
+        if not sel:
+            messagebox.showinfo("削除", "削除するマクロを一覧から選んでください")
+            return
+        if messagebox.askyesno("削除の確認", f"マクロ「{self.macros[sel[0]]['hotkey']}」を削除しますか？",
+                               icon="warning"):
             del self.macros[sel[0]]
             self.refresh_macros()
             self.new_macro()
