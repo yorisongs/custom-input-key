@@ -217,8 +217,6 @@ class App(tk.Tk):
         self.run_btn.pack(side="left")
         self._show_switch(False)
         ttk.Button(top, text="保存して反映", command=self.save).pack(side="left", padx=6)
-        self.status = ttk.Label(top, text="停止中", foreground="gray")
-        self.status.pack(side="left", padx=10)
         self.autostart_var = tk.BooleanVar(value=autostart.is_enabled())
         ttk.Checkbutton(top, text="PC起動時に自動起動", variable=self.autostart_var,
                         command=self.toggle_autostart).pack(side="right")
@@ -380,7 +378,7 @@ class App(tk.Tk):
     def _capture(self, apply):
         was_running = bool(self.engine.listener)
         self.engine.stop()  # 設定中はリマップ/マクロを止める
-        self.status.config(text="キーを押してください… (5秒)", foreground="orange")
+        self.log("キーを押してください… (5秒)")
 
         def done(keys):
             def ui():
@@ -391,8 +389,6 @@ class App(tk.Tk):
                     self.log("キー入力がありませんでした")
                 if was_running:
                     self.engine.start()
-                self.status.config(text="動作中" if was_running else "停止中",
-                                   foreground="green" if was_running else "gray")
             self.after(0, ui)
         KeyCapture(done)
 
@@ -455,10 +451,10 @@ class App(tk.Tk):
     def toggle(self):
         if self.engine.listener:
             self.engine.stop()
-            self.status.config(text="停止中", foreground="gray")
+            self.log("停止中")
         else:
             self.engine.start()
-            self.status.config(text="動作中", foreground="green")
+            self.log("動作中")
         self._show_switch(bool(self.engine.listener))
         if getattr(self, "tray", None):
             self.tray.update_menu()

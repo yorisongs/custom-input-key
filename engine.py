@@ -86,7 +86,6 @@ class Engine:
         kw = {"darwin_intercept": self._mac_filter} if IS_MAC else {"win32_event_filter": self._win_filter}
         self.listener = keyboard.Listener(**kw)
         self.listener.start()
-        self.log("フック開始")
 
     def stop(self):
         if self.listener:
@@ -95,7 +94,6 @@ class Engine:
             self.held.clear()
             self.held_raw.clear()
             self.held_prefix.clear()
-            self.log("フック停止")
 
     # ---------- 共通処理 ----------
     def _set_mod(self, name, down):
