@@ -204,6 +204,8 @@ class App(tk.Tk):
         self.icon_image = Image.open(ICON_PATH)
         self._tk_icon = ImageTk.PhotoImage(self.icon_image.resize((64, 64)))
         self.iconphoto(True, self._tk_icon)
+        if sys.platform == "win32":
+            self.iconbitmap(default=str(ICON_PATH))
         self.config_data = load_config()
         self.engine = Engine(self.config_data, log=self.log)
 
@@ -482,6 +484,10 @@ class App(tk.Tk):
 
 
 def main():
+    if sys.platform == "win32":
+        # タスクバーで Python ではなく本アプリのアイコンとして扱わせる
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CustomInputKey")
     app = App()
     app.withdraw()   # 画面は出さずに裏で動作(トレイアイコンから開ける)
     app.start_tray()
