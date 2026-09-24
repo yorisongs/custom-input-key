@@ -43,6 +43,8 @@ class Engine:
         self.held = set()          # 押下中の修飾キー(共通名)
         self.busy = False
         self.swallow_up = set()    # マクロ発動で握りつぶしたキー(離した時も握りつぶす)
+        self.held_prefix = {}      # 押下中の前置キー(修飾キー以外) -> 使用済みか
+        self.pass_mac = {}         # macOS: 自分で送り直すキーを素通しする回数
         self.load(config)
 
     # ---------- 設定 ----------
@@ -59,6 +61,9 @@ class Engine:
                 self.macros[parse_combo(m["hotkey"])] = m
             except ValueError as e:
                 self.log(f"[警告] {m.get('hotkey')}: {e}")
+        # 'space+j' の space のような、修飾キー以外の前置キー
+        self.prefix_keys = {CODES[k] for mods, _ in self.macros for k in mods
+                            if k not in MODIFIERS and k in CODES}
 
     # ---------- 開始/停止 ----------
     def start(self):
@@ -74,6 +79,7 @@ class Engine:
             self.listener.stop()
             self.listener = None
             self.held.clear()
+            self.held_prefix.clear()
             self.log("フック停止")
 
     # ---------- 共通処理 ----------
@@ -88,16 +94,39 @@ class Engine:
             self.swallow_up.discard(code)
             return "suppress"
 
+        # 前置キー: 押下中は握りつぶし、単独で離されたら本来のキーとして送る
+        if code in self.prefix_keys:
+            if down:
+                self.held_prefix.setdefault(code, False)
+                return "suppress"
+            if code in self.held_prefix:
+                if not self.held_prefix.pop(code):
+                    self._tap_code(code)
+                return "suppress"
+
         if down and name and not mod:
-            macro = self.macros.get((frozenset(self.held), name))
+            held = self.held | {NAMES[c] for c in self.held_prefix}
+            macro = self.macros.get((frozenset(held), name))
             if macro:
+                for c in self.held_prefix:
+                    self.held_prefix[c] = True
                 self.swallow_up.add(code)
                 threading.Thread(target=self._run_macro, args=(macro,), daemon=True).start()
                 return "suppress"
+            # マクロに無い組み合わせ → 前置キーを先に通常入力として送る(タイピング中の取りこぼし防止)
+            for c, used in list(self.held_prefix.items()):
+                if not used:
+                    self._tap_code(c)
+                    self.held_prefix[c] = True
 
         if code in self.remaps:
             return ("remap", self.remaps[code])
         return "pass"
+
+    def _tap_code(self, code):
+        if IS_MAC:
+            self.pass_mac[code] = self.pass_mac.get(code, 0) + 2
+        self.ctrl.tap(KeyCode.from_vk(code))
 
     # ---------- Windows ----------
     def _win_filter(self, msg, data):
@@ -129,6 +158,9 @@ class Engine:
             return event
         if self.busy:
             return event  # マクロ送信中のイベントは素通し
+        if self.pass_mac.get(code):
+            self.pass_mac[code] -= 1
+            return event  # 前置キーの送り直し
         r = self._handle(code, event_type == Q.kCGEventKeyDown)
         if r == "pass":
             return event
@@ -161,7 +193,7 @@ class Engine:
             time.sleep(float(val))
         elif kind in ("key", "combo"):
             mods, key = parse_combo(str(val))
-            with self.ctrl.pressed(*[PYNPUT_MOD[m] for m in mods]):
+            with self.ctrl.pressed(*[to_pynput(m) for m in mods]):
                 self.ctrl.tap(to_pynput(key))
         else:
             raise ValueError(f"不明なアクション: {kind}")

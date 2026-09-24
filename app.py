@@ -120,7 +120,7 @@ class App(tk.Tk):
 
         right = ttk.Frame(f)
         right.pack(side="left", fill="both", expand=True, padx=8)
-        ttk.Label(right, text="ホットキー (例: ctrl+alt+m / cmd+shift+1)").pack(anchor="w")
+        ttk.Label(right, text="ホットキー (例: ctrl+alt+m / space+j = スペース押しながらJ)").pack(anchor="w")
         self.hotkey_entry = ttk.Entry(right)
         self.hotkey_entry.pack(fill="x")
         ttk.Label(right, text=HELP, foreground="gray").pack(anchor="w", pady=4)

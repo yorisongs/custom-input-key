@@ -52,12 +52,13 @@ def normalize(name: str) -> str:
 
 
 def parse_combo(text: str):
-    """'ctrl+alt+m' -> (frozenset({'ctrl','alt'}), 'm')"""
+    """'ctrl+alt+m' -> (frozenset({'ctrl','alt'}), 'm')
+    修飾キー以外も前置できる: 'space+j' -> (frozenset({'space'}), 'j') = スペース押しながらJ"""
     parts = [normalize(p) for p in text.split("+") if p.strip()]
     if not parts:
         raise ValueError("空のキー指定です")
     mods = frozenset(MOD_ALIASES.get(p, p) for p in parts[:-1])
-    bad = mods - MODIFIERS
+    bad = {m for m in mods | {parts[-1]} if m not in MODIFIERS and m not in ALL_KEYS and len(m) != 1}
     if bad:
-        raise ValueError(f"修飾キーではありません: {', '.join(bad)}")
+        raise ValueError(f"不明なキー: {', '.join(bad)}")
     return mods, parts[-1]
