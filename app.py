@@ -5,8 +5,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from engine import Engine
-from keytables import ALL_KEYS, parse_combo
+from pynput import keyboard
+
+from engine import NAMES, Engine
+from keytables import ALL_KEYS, MOD_ALIASES, parse_combo
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 DEFAULT = {
@@ -46,6 +48,55 @@ def text_to_actions(text):
             float(val)
         acts.append({"type": kind, "value": val})
     return acts
+
+
+def key_name(key):
+    """pynputのキー -> keytablesのキー名"""
+    vk = getattr(getattr(key, "value", key), "vk", None)
+    name = NAMES.get(vk)
+    if name:
+        return name
+    ch = getattr(key, "char", None)
+    return ch.lower() if ch else None
+
+
+class KeyCapture:
+    """実際にキーを押させて判定する。最初のキーが離された時点で確定。
+    on_done(押した順のキー名リスト) を呼ぶ(タイムアウト時は空リスト)。"""
+
+    def __init__(self, on_done, timeout=5.0):
+        self.keys, self.on_done, self.done = [], on_done, False
+        self.listener = keyboard.Listener(on_press=self._press, on_release=self._release, suppress=True)
+        self.listener.start()
+        self.timer = __import__("threading").Timer(timeout, self._finish)
+        self.timer.start()
+
+    def _press(self, key):
+        name = key_name(key)
+        if name and name not in self.keys:
+            self.keys.append(name)
+
+    def _release(self, key):
+        if self.keys:
+            self._finish()
+
+    def _finish(self):
+        if self.done:
+            return
+        self.done = True
+        self.timer.cancel()
+        self.listener.stop()
+        self.on_done(list(self.keys))
+
+
+def keys_to_hotkey(keys):
+    """押した順のキー -> 'ctrl+space+j' 形式(修飾キーを先頭に)"""
+    if not keys:
+        return ""
+    *pre, last = keys
+    mods = [MOD_ALIASES[k] for k in pre if k in MOD_ALIASES]
+    others = [k for k in pre if k not in MOD_ALIASES]
+    return "+".join(dict.fromkeys(mods + others + [MOD_ALIASES.get(last, last)]))
 
 
 class App(tk.Tk):
@@ -89,8 +140,10 @@ class App(tk.Tk):
         self.src_cb = ttk.Combobox(row, values=ALL_KEYS, width=14)
         self.dst_cb = ttk.Combobox(row, values=ALL_KEYS, width=14)
         self.src_cb.pack(side="left")
+        ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_single(self.src_cb)).pack(side="left")
         ttk.Label(row, text="→").pack(side="left", padx=4)
         self.dst_cb.pack(side="left")
+        ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_single(self.dst_cb)).pack(side="left")
         ttk.Button(row, text="追加", command=self.add_remap).pack(side="left", padx=6)
         ttk.Button(row, text="選択を削除",
                    command=lambda: [self.remap_tree.delete(i) for i in self.remap_tree.selection()]
@@ -121,8 +174,11 @@ class App(tk.Tk):
         right = ttk.Frame(f)
         right.pack(side="left", fill="both", expand=True, padx=8)
         ttk.Label(right, text="ホットキー (例: ctrl+alt+m / space+j = スペース押しながらJ)").pack(anchor="w")
-        self.hotkey_entry = ttk.Entry(right)
-        self.hotkey_entry.pack(fill="x")
+        hk_row = ttk.Frame(right)
+        hk_row.pack(fill="x")
+        self.hotkey_entry = ttk.Entry(hk_row)
+        self.hotkey_entry.pack(side="left", fill="x", expand=True)
+        ttk.Button(hk_row, text="⌨ キーを押して設定", command=self.capture_hotkey).pack(side="left", padx=4)
         ttk.Label(right, text=HELP, foreground="gray").pack(anchor="w", pady=4)
         self.actions_text = tk.Text(right, height=10)
         self.actions_text.pack(fill="both", expand=True)
@@ -175,6 +231,37 @@ class App(tk.Tk):
             self.macros.append(m)
         self.refresh_macros()
         self.log(f"マクロ確定: {hk} (保存で反映)")
+
+    # ---------- キー入力で判定 ----------
+    def _capture(self, apply):
+        was_running = bool(self.engine.listener)
+        self.engine.stop()  # 設定中はリマップ/マクロを止める
+        self.status.config(text="キーを押してください… (5秒)", foreground="orange")
+
+        def done(keys):
+            def ui():
+                if keys:
+                    apply(keys)
+                    self.log(f"判定: {' + '.join(keys)}")
+                else:
+                    self.log("キー入力がありませんでした")
+                if was_running:
+                    self.engine.start()
+                self.status.config(text="動作中" if was_running else "停止中",
+                                   foreground="green" if was_running else "gray")
+            self.after(0, ui)
+        KeyCapture(done)
+
+    def capture_single(self, combo):
+        def apply(keys):
+            combo.set(keys[-1])
+        self._capture(apply)
+
+    def capture_hotkey(self):
+        def apply(keys):
+            self.hotkey_entry.delete(0, "end")
+            self.hotkey_entry.insert(0, keys_to_hotkey(keys))
+        self._capture(apply)
 
     # ---------- 共通 ----------
     def save(self):
