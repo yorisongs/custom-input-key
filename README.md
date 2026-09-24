@@ -7,18 +7,22 @@ Windows / macOS 両対応のキーボード拡張アプリ（キー変更・マ�
 pip install -r requirements.txt
 python app.py
 ```
+黒い画面を出さずに起動したい場合は **`CustomInputKey.pyw` をダブルクリック**してください。
 「▶ 開始」でフックが有効になります。設定は `config.json` に保存されます。
 
 ## 機能
 キーは名前を入力しなくても、「⌨」ボタンを押してから実際にキーを押せば判定されます
 （ホットキーは同時押しのまま、最初のキーを離した時点で確定。例: スペースを押しながらJ → `space+j`）。
 
-- **キー変更**: 例 `caps_lock → ctrl_l`, `muhenkan → esc`
+- **キー変更**: 例 `caps_lock → ctrl_l`, `muhenkan → esc`, `shift+s → 8`
+  - 置き換え先に「📌 スクリーンショット(範囲)」「音量を上げる」などの**機能**も選べます（一覧は `functions.py`）
 - **マクロ**: ホットキー（例 `ctrl+alt+m`、`space+j` = スペースを押しながらJ）で以下を順番に実行
   - `text: 文字列` 文字を入力
   - `key: enter` キーを1回押す
   - `combo: ctrl+c` 同時押し
   - `wait: 0.5` 待機（秒）
+  - `func: screenshot_area` 機能を実行（「機能を挿入」ボタンで選択可）
+  - `open: https://...` ファイル/URL/アプリを開く
 
 ### 押しながら発火（前置キー）
 `space+j` のように修飾キー以外を前に書くと、そのキーを押している間の組み合わせで発火します。

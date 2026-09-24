@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 from pynput import keyboard
 
 from engine import NAMES, Engine
+from functions import CHOICE_OF, CHOICES, FUNCTIONS
 from keytables import ALL_KEYS, MOD_ALIASES, parse_combo
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
@@ -19,7 +20,8 @@ DEFAULT = {
             {"type": "key", "value": "enter"}]},
     ],
 }
-HELP = "1行に1アクション:\n  text: 入力する文字\n  key: enter\n  combo: ctrl+c\n  wait: 0.5 (秒)"
+HELP = ("1行に1アクション:\n  text: 入力する文字    key: enter    combo: ctrl+c\n"
+        "  wait: 0.5 (秒)    func: 機能 (下で選んで挿入)    open: ファイル/URL/アプリのパス")
 
 
 def load_config():
@@ -39,13 +41,15 @@ def text_to_actions(text):
             continue
         kind, sep, val = line.partition(":")
         kind = kind.strip().lower()
-        if not sep or kind not in ("text", "key", "combo", "wait"):
+        if not sep or kind not in ("text", "key", "combo", "wait", "func", "open"):
             raise ValueError(f"{n}行目の形式が不正です: {line}")
         val = val[1:] if val.startswith(" ") else val
         if kind in ("key", "combo"):
             parse_combo(val)
         elif kind == "wait":
             float(val)
+        elif kind == "func" and val.strip() not in FUNCTIONS:
+            raise ValueError(f"{n}行目: 不明な機能 {val}")
         acts.append({"type": kind, "value": val})
     return acts
 
@@ -134,16 +138,16 @@ class App(tk.Tk):
         self.remap_tree.heading("dst", text="→ 置き換え後")
         self.remap_tree.pack(fill="both", expand=True)
         for s, d in self.config_data.get("remaps", {}).items():
-            self.remap_tree.insert("", "end", values=(s, d))
+            self.remap_tree.insert("", "end", values=(s, CHOICE_OF.get(d, d)))
         row = ttk.Frame(f)
         row.pack(fill="x", pady=6)
         self.src_cb = ttk.Combobox(row, values=ALL_KEYS, width=14)
-        self.dst_cb = ttk.Combobox(row, values=ALL_KEYS, width=14)
+        self.dst_cb = ttk.Combobox(row, values=list(CHOICES) + ALL_KEYS, width=24)
         self.src_cb.pack(side="left")
-        ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_single(self.src_cb)).pack(side="left")
+        ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_combo(self.src_cb.set)).pack(side="left")
         ttk.Label(row, text="→").pack(side="left", padx=4)
         self.dst_cb.pack(side="left")
-        ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_single(self.dst_cb)).pack(side="left")
+        ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_combo(self.dst_cb.set)).pack(side="left")
         ttk.Button(row, text="追加", command=self.add_remap).pack(side="left", padx=6)
         ttk.Button(row, text="選択を削除",
                    command=lambda: [self.remap_tree.delete(i) for i in self.remap_tree.selection()]
@@ -152,8 +156,12 @@ class App(tk.Tk):
 
     def add_remap(self):
         s, d = self.src_cb.get().strip(), self.dst_cb.get().strip()
-        if s not in ALL_KEYS or d not in ALL_KEYS:
-            messagebox.showerror("エラー", "一覧にあるキー名を選んでください")
+        try:
+            parse_combo(s)
+            if d not in CHOICES:
+                parse_combo(d)
+        except ValueError as e:
+            messagebox.showerror("エラー", f"キー指定が不正です: {e}")
             return
         for i in self.remap_tree.get_children():
             if self.remap_tree.item(i)["values"][0] == s:
@@ -182,6 +190,13 @@ class App(tk.Tk):
         ttk.Label(right, text=HELP, foreground="gray").pack(anchor="w", pady=4)
         self.actions_text = tk.Text(right, height=10)
         self.actions_text.pack(fill="both", expand=True)
+        ins = ttk.Frame(right)
+        ins.pack(fill="x", pady=(4, 0))
+        self.func_cb = ttk.Combobox(ins, values=list(CHOICES), state="readonly", width=28)
+        self.func_cb.pack(side="left")
+        ttk.Button(ins, text="機能を挿入", command=self.insert_func).pack(side="left", padx=4)
+        ttk.Button(ins, text="⌨ キーを挿入", command=lambda: self.capture_combo(
+            lambda c: self._insert_line(f"combo: {c}"))).pack(side="left")
         ttk.Button(right, text="このマクロを確定", command=self.commit_macro).pack(anchor="e", pady=4)
 
         self.macros = list(self.config_data.get("macros", []))
@@ -252,10 +267,18 @@ class App(tk.Tk):
             self.after(0, ui)
         KeyCapture(done)
 
-    def capture_single(self, combo):
-        def apply(keys):
-            combo.set(keys[-1])
-        self._capture(apply)
+    def capture_combo(self, setter):
+        self._capture(lambda keys: setter(keys_to_hotkey(keys)))
+
+    def _insert_line(self, line):
+        body = self.actions_text.get("1.0", "end").rstrip()
+        self.actions_text.delete("1.0", "end")
+        self.actions_text.insert("1.0", (body + "\n" if body else "") + line)
+
+    def insert_func(self):
+        choice = self.func_cb.get()
+        if choice:
+            self._insert_line(f"func: {CHOICES[choice][5:]}")
 
     def capture_hotkey(self):
         def apply(keys):
@@ -266,7 +289,7 @@ class App(tk.Tk):
     # ---------- 共通 ----------
     def save(self):
         self.config_data = {
-            "remaps": {str(v[0]): str(v[1]) for v in
+            "remaps": {str(v[0]): CHOICES.get(str(v[1]), str(v[1])) for v in
                        (self.remap_tree.item(i)["values"] for i in self.remap_tree.get_children())},
             "macros": self.macros,
         }

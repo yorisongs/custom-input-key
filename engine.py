@@ -1,4 +1,6 @@
 """キーフック本体。キーの置き換え(リマップ)とマクロ実行を行う。"""
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -6,10 +8,10 @@ import time
 from pynput import keyboard
 from pynput.keyboard import Controller, Key, KeyCode
 
-from keytables import MAC_KC, MOD_ALIASES, MODIFIERS, WIN_VK, parse_combo
+from functions import combo_for
+from keytables import MAC_KC, MOD_ALIASES, MODIFIERS, WIN_VK, normalize, parse_combo
 
 IS_MAC = sys.platform == "darwin"
-IS_WIN = sys.platform == "win32"
 CODES = MAC_KC if IS_MAC else WIN_VK
 NAMES = {v: k for k, v in CODES.items()}
 
@@ -24,6 +26,8 @@ PYNPUT_SPECIAL = {
 
 
 def to_pynput(name):
+    if name.startswith("@"):  # pynput の Key 名 (例: @media_volume_up)
+        return getattr(Key, name[1:])
     if name in PYNPUT_MOD:
         return PYNPUT_MOD[name]
     if name in PYNPUT_SPECIAL:
@@ -35,27 +39,37 @@ def to_pynput(name):
     raise ValueError(f"不明なキー: {name}")
 
 
+def output_action(dst):
+    """キー変更の置き換え先 -> マクロのアクション"""
+    if dst.startswith("func:"):
+        return {"type": "func", "value": dst[5:]}
+    return {"type": "combo", "value": dst}
+
+
 class Engine:
     def __init__(self, config, log=print):
         self.log = log
         self.ctrl = Controller()
         self.listener = None
-        self.held = set()          # 押下中の修飾キー(共通名)
+        self.held = set()          # 押下中の修飾キー(共通名: ctrl等)
+        self.held_raw = set()      # 押下中の修飾キー(左右区別: ctrl_l等)
         self.busy = False
-        self.swallow_up = set()    # マクロ発動で握りつぶしたキー(離した時も握りつぶす)
+        self.swallow_up = set()    # 発動で握りつぶしたキー(離した時も握りつぶす)
         self.held_prefix = {}      # 押下中の前置キー(修飾キー以外) -> 使用済みか
         self.pass_mac = {}         # macOS: 自分で送り直すキーを素通しする回数
         self.load(config)
 
     # ---------- 設定 ----------
     def load(self, config):
-        self.remaps = {}
+        self.remaps, self.macros = {}, {}
         for src, dst in config.get("remaps", {}).items():
-            if src in CODES and dst in CODES:
-                self.remaps[CODES[src]] = CODES[dst]
-            else:
-                self.log(f"[警告] このOSでは使えないリマップ: {src} -> {dst}")
-        self.macros = {}
+            try:
+                if "+" not in src and src in CODES and dst in CODES:
+                    self.remaps[CODES[src]] = CODES[dst]  # 単キー→単キーは押しっぱなしも効く置き換え
+                else:
+                    self.macros[parse_combo(src)] = {"hotkey": src, "actions": [output_action(dst)]}
+            except ValueError as e:
+                self.log(f"[警告] キー変更 {src}: {e}")
         for m in config.get("macros", []):
             try:
                 self.macros[parse_combo(m["hotkey"])] = m
@@ -79,16 +93,22 @@ class Engine:
             self.listener.stop()
             self.listener = None
             self.held.clear()
+            self.held_raw.clear()
             self.held_prefix.clear()
             self.log("フック停止")
 
     # ---------- 共通処理 ----------
+    def _set_mod(self, name, down):
+        if name not in MOD_ALIASES:
+            return False
+        (self.held_raw.add if down else self.held_raw.discard)(name)
+        self.held = {MOD_ALIASES[n] for n in self.held_raw}
+        return True
+
     def _handle(self, code, down):
         """戻り値: 'pass' / 'suppress' / ('remap', 新コード)"""
         name = NAMES.get(code)
-        mod = MOD_ALIASES.get(name)
-        if mod:
-            (self.held.add if down else self.held.discard)(mod)
+        mod = self._set_mod(name, down)
 
         if not down and code in self.swallow_up:
             self.swallow_up.discard(code)
@@ -144,6 +164,8 @@ class Engine:
     # ---------- macOS ----------
     def _mac_filter(self, event_type, event):
         import Quartz as Q
+        if self.busy:
+            return event  # マクロ送信中のイベントは素通し
         code = Q.CGEventGetIntegerValueField(event, Q.kCGKeyboardEventKeycode)
         if event_type == Q.kCGEventFlagsChanged:
             name = NAMES.get(code)
@@ -151,13 +173,10 @@ class Engine:
             if mod:
                 flag = {"ctrl": Q.kCGEventFlagMaskControl, "shift": Q.kCGEventFlagMaskShift,
                         "alt": Q.kCGEventFlagMaskAlternate, "cmd": Q.kCGEventFlagMaskCommand}[mod]
-                down = bool(Q.CGEventGetFlags(event) & flag)
-                (self.held.add if down else self.held.discard)(mod)
+                self._set_mod(name, bool(Q.CGEventGetFlags(event) & flag))
             return event  # 修飾キーのリマップはmacOS標準設定を推奨
         if event_type not in (Q.kCGEventKeyDown, Q.kCGEventKeyUp):
             return event
-        if self.busy:
-            return event  # マクロ送信中のイベントは素通し
         if self.pass_mac.get(code):
             self.pass_mac[code] -= 1
             return event  # 前置キーの送り直し
@@ -171,30 +190,46 @@ class Engine:
 
     # ---------- マクロ ----------
     def _run_macro(self, macro):
-        self.log(f"マクロ実行: {macro['hotkey']}")
-        # 押しっぱなしの修飾キーが混ざらないよう、離されるまで最大2秒待つ
-        t = time.time()
-        while self.held and time.time() - t < 2:
-            time.sleep(0.02)
+        self.log(f"実行: {macro['hotkey']}")
         self.busy = True
+        # 押しっぱなしの修飾キー(例: shift+s の shift)が出力に混ざらないよう一旦離す
+        held = [n for n in self.held_raw if n in CODES]
+        for n in held:
+            self.ctrl.release(KeyCode.from_vk(CODES[n]))
         try:
             for act in macro.get("actions", []):
                 self._do(act)
         except Exception as e:
-            self.log(f"[エラー] マクロ失敗: {e}")
+            self.log(f"[エラー] {e}")
         finally:
+            # まだ押されている修飾キーは押し直す(続けて操作できるように)
+            for n in held:
+                if n in self.held_raw:
+                    self.ctrl.press(KeyCode.from_vk(CODES[n]))
             self.busy = False
 
+    def press_combo(self, combo):
+        keys = [to_pynput(normalize(p)) for p in combo.split("+") if p.strip()]
+        for k in keys:
+            self.ctrl.press(k)
+        for k in reversed(keys):
+            self.ctrl.release(k)
+
     def _do(self, act):
-        kind, val = act["type"], act.get("value", "")
+        kind, val = act["type"], str(act.get("value", ""))
         if kind == "text":
-            self.ctrl.type(str(val))
+            self.ctrl.type(val)
         elif kind == "wait":
             time.sleep(float(val))
         elif kind in ("key", "combo"):
-            mods, key = parse_combo(str(val))
-            with self.ctrl.pressed(*[to_pynput(m) for m in mods]):
-                self.ctrl.tap(to_pynput(key))
+            self.press_combo(val)
+        elif kind == "func":
+            self.press_combo(combo_for(val))
+        elif kind == "open":
+            if IS_MAC:
+                subprocess.Popen(["open", val])
+            else:
+                os.startfile(val)
         else:
             raise ValueError(f"不明なアクション: {kind}")
         time.sleep(0.01)
