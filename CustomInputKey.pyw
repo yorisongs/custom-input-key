@@ -1,4 +1,4 @@
-# ダブルクリックで黒い画面(コンソール)なしで起動するためのランチャー
-from app import App
+# ダブルクリックで黒い画面なし・トレイ常駐で起動するランチャー
+from app import main
 
-App().mainloop()
+main()

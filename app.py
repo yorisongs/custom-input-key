@@ -5,6 +5,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+import pystray
+from PIL import Image, ImageTk
 from pynput import keyboard
 
 from engine import NAMES, Engine
@@ -12,6 +14,7 @@ from functions import CHOICE_OF, CHOICES, FUNCTIONS
 from keytables import ALL_KEYS, MOD_ALIASES, parse_combo
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
+ICON_PATH = Path(__file__).with_name("app_icon.ico")
 DEFAULT = {
     "remaps": {"caps_lock": "ctrl_l"},
     "macros": [
@@ -116,8 +119,11 @@ class Table(ttk.Frame):
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner = tk.Frame(self.canvas, bg=self.LINE)  # 背景色が線として見える
         win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(win, width=e.width))
+        self.inner.bind("<Configure>", lambda e: self._update_scroll())
+        self.canvas.bind("<Configure>", lambda e: (self.canvas.itemconfigure(win, width=e.width),
+                                                   self._update_scroll()))
+        for w in (self.canvas, self.inner):
+            w.bind("<MouseWheel>", self._wheel)
         for c in range(len(headings)):
             self.inner.columnconfigure(c, weight=1, uniform="col")
         for c, h in enumerate(headings):
@@ -134,11 +140,22 @@ class Table(ttk.Frame):
         self.rows.append([list(values), cells])
         self._layout()
 
+    def _update_scroll(self):
+        h = max(self.inner.winfo_reqheight(), self.canvas.winfo_height())
+        self.canvas.configure(scrollregion=(0, 0, self.canvas.winfo_width(), h))
+        if self.inner.winfo_reqheight() <= self.canvas.winfo_height():
+            self.canvas.yview_moveto(0)  # 全部見えているときは常に先頭から表示
+
+    def _wheel(self, e):
+        if self.inner.winfo_reqheight() > self.canvas.winfo_height():
+            self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+
     def _layout(self):
         for r, (_, cells) in enumerate(self.rows, 1):
             for c, lb in enumerate(cells):
                 lb.grid(row=r, column=c, sticky="nsew", padx=(1, 1), pady=(0, 1))
                 lb.bind("<Button-1>", lambda e, i=r - 1: self.select(i))
+                lb.bind("<MouseWheel>", self._wheel)
                 lb.config(bg=self.SEL if r - 1 == self.selected else "white")
 
     def select(self, i):
@@ -164,6 +181,9 @@ class App(tk.Tk):
         super().__init__()
         self.title("Custom Input Key")
         self.geometry("640x520")
+        self.icon_image = Image.open(ICON_PATH)
+        self._tk_icon = ImageTk.PhotoImage(self.icon_image.resize((64, 64)))
+        self.iconphoto(True, self._tk_icon)
         self.config_data = load_config()
         self.engine = Engine(self.config_data, log=self.log)
 
@@ -184,7 +204,7 @@ class App(tk.Tk):
 
         self.logbox = tk.Text(self, height=6, state="disabled")
         self.logbox.pack(fill="x", padx=8, pady=8)
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.protocol("WM_DELETE_WINDOW", self.hide)  # ×ボタンではトレイに隠れるだけ
         if sys.platform == "darwin":
             self.log("macOS: システム設定 > プライバシーとセキュリティ > アクセシビリティ と 入力監視 でこのアプリ(ターミナル/Python)を許可してください")
 
@@ -367,6 +387,8 @@ class App(tk.Tk):
             self.engine.start()
             self.status.config(text="動作中", foreground="green")
         self._show_switch(bool(self.engine.listener))
+        if getattr(self, "tray", None):
+            self.tray.update_menu()
 
     def log(self, msg):
         def w():
@@ -376,10 +398,38 @@ class App(tk.Tk):
             self.logbox.config(state="disabled")
         self.after(0, w)
 
-    def on_close(self):
+    # ---------- タスクトレイ常駐 ----------
+    def start_tray(self):
+        menu = pystray.Menu(
+            pystray.MenuItem("設定を開く", lambda: self.after(0, self.show), default=True),
+            pystray.MenuItem("有効 (ON/OFF)", lambda: self.after(0, self.toggle),
+                             checked=lambda _: bool(self.engine.listener)),
+            pystray.MenuItem("終了", lambda: self.after(0, self.quit_app)),
+        )
+        self.tray = pystray.Icon("CustomInputKey", self.icon_image, "Custom Input Key", menu)
+        self.tray.run_detached()
+
+    def show(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def hide(self):
+        self.withdraw()
+
+    def quit_app(self):
         self.engine.stop()
+        self.tray.stop()
         self.destroy()
 
 
+def main():
+    app = App()
+    app.withdraw()   # 画面は出さずに裏で動作(トレイアイコンから開ける)
+    app.start_tray()
+    app.toggle()     # 起動時からON
+    app.mainloop()
+
+
 if __name__ == "__main__":
-    App().mainloop()
+    main()
