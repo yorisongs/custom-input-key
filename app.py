@@ -103,6 +103,62 @@ def keys_to_hotkey(keys):
     return "+".join(dict.fromkeys(mods + others + [MOD_ALIASES.get(last, last)]))
 
 
+class Table(ttk.Frame):
+    """全セルに区切り線のある表。クリックで行を選択。"""
+    LINE, SEL = "#b0b0b0", "#cce4ff"
+
+    def __init__(self, parent, headings):
+        super().__init__(parent)
+        self.canvas = tk.Canvas(self, bg="white", highlightthickness=1, highlightbackground=self.LINE)
+        bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner = tk.Frame(self.canvas, bg=self.LINE)  # 背景色が線として見える
+        win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(win, width=e.width))
+        for c in range(len(headings)):
+            self.inner.columnconfigure(c, weight=1, uniform="col")
+        for c, h in enumerate(headings):
+            tk.Label(self.inner, text=h, bg="#e8e8e8", anchor="center", pady=3
+                     ).grid(row=0, column=c, sticky="nsew", padx=(1, 1), pady=(1, 1))
+        self.rows, self.selected = [], None
+
+    def insert(self, values):
+        cells = []
+        for c, v in enumerate(values):
+            lb = tk.Label(self.inner, text=v, bg="white", anchor="w", padx=6, pady=3)
+            lb.bind("<Button-1>", lambda e, r=len(self.rows): self.select(r))
+            cells.append(lb)
+        self.rows.append([list(values), cells])
+        self._layout()
+
+    def _layout(self):
+        for r, (_, cells) in enumerate(self.rows, 1):
+            for c, lb in enumerate(cells):
+                lb.grid(row=r, column=c, sticky="nsew", padx=(1, 1), pady=(0, 1))
+                lb.bind("<Button-1>", lambda e, i=r - 1: self.select(i))
+                lb.config(bg=self.SEL if r - 1 == self.selected else "white")
+
+    def select(self, i):
+        self.selected = i
+        self._layout()
+
+    def values(self):
+        return [v for v, _ in self.rows]
+
+    def delete(self, i):
+        for lb in self.rows.pop(i)[1]:
+            lb.destroy()
+        self.selected = None
+        self._layout()
+
+    def delete_selected(self):
+        if self.selected is not None:
+            self.delete(self.selected)
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -113,8 +169,10 @@ class App(tk.Tk):
 
         top = ttk.Frame(self, padding=8)
         top.pack(fill="x")
-        self.run_btn = ttk.Button(top, text="▶ 開始", command=self.toggle)
+        self.run_btn = tk.Button(top, width=6, relief="flat", font=("", 10, "bold"),
+                                 fg="white", command=self.toggle)
         self.run_btn.pack(side="left")
+        self._show_switch(False)
         ttk.Button(top, text="保存して反映", command=self.save).pack(side="left", padx=6)
         self.status = ttk.Label(top, text="停止中", foreground="gray")
         self.status.pack(side="left", padx=10)
@@ -133,12 +191,10 @@ class App(tk.Tk):
     # ---------- キー変更タブ ----------
     def _remap_tab(self, parent):
         f = ttk.Frame(parent, padding=8)
-        self.remap_tree = ttk.Treeview(f, columns=("src", "dst"), show="headings", height=10)
-        self.remap_tree.heading("src", text="押したキー")
-        self.remap_tree.heading("dst", text="→ 置き換え後")
+        self.remap_tree = Table(f, ["押したキー", "→ 置き換え後"])
         self.remap_tree.pack(fill="both", expand=True)
         for s, d in self.config_data.get("remaps", {}).items():
-            self.remap_tree.insert("", "end", values=(s, CHOICE_OF.get(d, d)))
+            self.remap_tree.insert((s, CHOICE_OF.get(d, d)))
         row = ttk.Frame(f)
         row.pack(fill="x", pady=6)
         self.src_cb = ttk.Combobox(row, values=ALL_KEYS, width=14)
@@ -150,7 +206,7 @@ class App(tk.Tk):
         ttk.Button(row, text="⌨", width=3, command=lambda: self.capture_combo(self.dst_cb.set)).pack(side="left")
         ttk.Button(row, text="追加", command=self.add_remap).pack(side="left", padx=6)
         ttk.Button(row, text="選択を削除",
-                   command=lambda: [self.remap_tree.delete(i) for i in self.remap_tree.selection()]
+                   command=self.remap_tree.delete_selected
                    ).pack(side="left")
         return f
 
@@ -163,10 +219,11 @@ class App(tk.Tk):
         except ValueError as e:
             messagebox.showerror("エラー", f"キー指定が不正です: {e}")
             return
-        for i in self.remap_tree.get_children():
-            if self.remap_tree.item(i)["values"][0] == s:
+        for i, v in enumerate(self.remap_tree.values()):
+            if v[0] == s:
                 self.remap_tree.delete(i)
-        self.remap_tree.insert("", "end", values=(s, d))
+                break
+        self.remap_tree.insert((s, d))
 
     # ---------- マクロタブ ----------
     def _macro_tab(self, parent):
@@ -290,22 +347,26 @@ class App(tk.Tk):
     def save(self):
         self.config_data = {
             "remaps": {str(v[0]): CHOICES.get(str(v[1]), str(v[1])) for v in
-                       (self.remap_tree.item(i)["values"] for i in self.remap_tree.get_children())},
+                       self.remap_tree.values()},
             "macros": self.macros,
         }
         CONFIG_PATH.write_text(json.dumps(self.config_data, ensure_ascii=False, indent=2), encoding="utf-8")
         self.engine.load(self.config_data)
         self.log("保存・反映しました")
 
+    def _show_switch(self, on):
+        color = "#2e9e4f" if on else "#9a9a9a"
+        self.run_btn.config(text="ON" if on else "OFF", bg=color, activebackground=color,
+                            activeforeground="white")
+
     def toggle(self):
         if self.engine.listener:
             self.engine.stop()
-            self.run_btn.config(text="▶ 開始")
             self.status.config(text="停止中", foreground="gray")
         else:
             self.engine.start()
-            self.run_btn.config(text="■ 停止")
             self.status.config(text="動作中", foreground="green")
+        self._show_switch(bool(self.engine.listener))
 
     def log(self, msg):
         def w():
