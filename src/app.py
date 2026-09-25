@@ -6,6 +6,7 @@ from pathlib import Path
 from tkinter import ttk
 
 import autostart
+import version
 import popup as messagebox  # 音なし・ウィンドウ中央のポップアップ
 
 import pystray
@@ -200,7 +201,8 @@ class Table(ttk.Frame):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Custom Input Key")
+        self.updated, self.commit = version.last_updated()
+        self.title(f"Custom Input Key  v{version.VERSION}")
         self.geometry("640x520")
         self.icon_image = Image.open(ICON_PATH)
         self._tk_icon = ImageTk.PhotoImage(self.icon_image.resize((64, 64)))
@@ -220,6 +222,10 @@ class App(tk.Tk):
         self.autostart_var = tk.BooleanVar(value=autostart.is_enabled())
         ttk.Checkbutton(top, text="PC起動時に自動起動", variable=self.autostart_var,
                         command=self.toggle_autostart).pack(side="right")
+        ver = ttk.Label(top, text=f"v{version.VERSION}  (更新 {self.updated})",
+                        foreground="gray", cursor="hand2")
+        ver.pack(side="right", padx=10)
+        ver.bind("<Button-1>", lambda e: self.show_about())
 
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8)
@@ -473,10 +479,17 @@ class App(tk.Tk):
             pystray.MenuItem("設定を開く", lambda: self.after(0, self.show), default=True),
             pystray.MenuItem("有効 (ON/OFF)", lambda: self.after(0, self.toggle),
                              checked=lambda _: bool(self.engine.listener)),
+            pystray.MenuItem("バージョン情報", lambda: self.after(0, self.show_about)),
             pystray.MenuItem("終了", lambda: self.after(0, self.quit_app)),
         )
         self.tray = pystray.Icon("CustomInputKey", self.icon_image, "Custom Input Key", menu)
         self.tray.run_detached()
+
+    def show_about(self):
+        lines = ["Custom Input Key", "", f"バージョン: {version.VERSION}", f"最終更新: {self.updated}"]
+        if self.commit:
+            lines.append(f"コミット: {self.commit}")
+        messagebox.showinfo("バージョン情報", "\n".join(lines))
 
     def show(self):
         self.deiconify()
